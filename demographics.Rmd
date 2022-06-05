@@ -1,0 +1,215 @@
+---
+title: "R Notebook"
+output: html_notebook
+
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+
+```
+
+#Get Demographic Responses
+Read in the data as exported by Qualtrics
+
+```{r}
+demographic_data <- read.csv("../Data Collection/demographicsImport.csv")
+# head(demographic_data)
+```
+
+#Tidy up Variables
+Drop unnecessary rows and columns and rename columns to something useful. 
+```{r}
+demographic_data <- demographic_data %>%
+  select(Q1:Q8_11_TEXT) %>%
+  select(-Q2_8_TEXT, -Q9_8_TEXT) %>%
+  rename(Pronouns = Q1) %>%
+  rename(User = Q10) %>%
+  rename(UserText = Q10_3_TEXT) %>%
+  rename(Degrees = Q2) %>%
+  # rename(DegreesText = Q2_8_TEXT) %>%
+  rename(Graduation = Q5) %>%
+  rename(Student = Q6) %>%
+  rename(Pursuing = Q9) %>%
+  # rename(PursuingText = Q9_8_TEXT) %>%
+  rename(Discipline = Q8) %>%
+  rename(DisciplineText = Q8_11_TEXT) %>%
+  slice(-1, -2)
+  
+# head(demographic_data)
+```
+
+#Recode Yes/No
+Swap out Yes and No for more meaningful labels that are useful when charting.
+
+```{r}
+recodedUser <- recode(demographic_data$User, "Yes" = "User", "No" = "Non-user", .default = "Unknown")
+recodedStudent <-  recode(demographic_data$Student, "Yes" = "Student", "No" = "Not student", .default = "Unknown")
+
+demographic_data <- demographic_data %>%
+  mutate(User = recodedUser,
+         Student = recodedStudent)
+  
+
+head(demographic_data)
+```
+
+#Assign values for missing or inconsistent data
+A participant responded "only slightly" to whether or not they were a user; this will be coded as "yes" to indicate that they are a user. Another participant didn't consider psychology to be a social science, but I am. And, I'll reduce a sentence long response to a phrase.
+
+```{r}
+demographic_data <- demographic_data %>%
+  mutate(User = ifelse( UserText == "only slightly", "User", User)) %>%
+  mutate(Discipline = ifelse( Discipline == "I don’t belong to an academic discipline", "No Discipline", Discipline)) %>%
+  mutate(Discipline = ifelse( DisciplineText == "Psychology / Behavioural Science", "Social Science", Discipline))
+
+```
+
+#Make Factors
+Discipline and Users will be charted later and I want to order the variables in that chart. It's easiest to do that by making discipline and user status factors
+```{r}
+demographic_data <- demographic_data %>%
+  mutate(Discipline = factor(Discipline, levels = c("Chemical or Material Sciences", "Engineering or Computer Science", "Health or Medical Sciences", "Humanities", "Life or Earth Sciences","Physics or Math", "Social Science", "No Discipline"), ordered = TRUE)) %>%
+  mutate(User = factor(User, levels = c("User", "Non-user", "Unknown"), ordered = TRUE))
+
+```
+
+
+#Add Highest Degree
+Get the highest degree the participant earned and swap that out for the list of all of the ones they earned.
+
+```{r}
+highestDegree <- word(demographic_data$Degrees,sep=",",-1)
+
+demographic_data <- demographic_data %>%
+  mutate(HighestDegree = highestDegree, .before = Graduation,
+         Degrees = NULL)
+
+head(demographic_data)
+```
+
+#Fix cruddy data in Graduation.
+Remove text answers and leave only the year.
+
+```{r}
+#remove answers that have no digits in them
+GradDate <- ifelse(str_detect(demographic_data$Graduation, "\\d"), demographic_data$Graduation, NA)
+
+demographic_data <- demographic_data %>%
+  mutate(Graduation = GradDate)
+
+#remove text from remaining answers
+GradYear <- str_remove(demographic_data$Graduation, "[:alpha:]+")
+
+demographic_data <- demographic_data %>%
+  mutate(Graduation = GradYear) 
+
+#make numeric because apparently its basically impossible to make it a date
+demographic_data$Graduation <- as.numeric(demographic_data$Graduation)
+
+head(demographic_data)
+```
+
+
+#Get Number of users, PhDs, etc.
+
+```{r}
+countUsers <- sum(str_detect(demographic_data$User, "User"))
+countNonUsers <- sum(str_detect(demographic_data$User, "Non-user"))
+countUnknownUsers <- sum(str_detect(demographic_data$User, "Unknown"))
+
+countStudents <- sum(str_detect(demographic_data$Student, "Student"))
+countNotStudents <- sum(str_detect(demographic_data$Student, "Not student"))                      
+
+countPhD <- sum(str_detect(demographic_data$HighestDegree, "PhD"))
+countPhD
+
+countMasters <- sum(str_detect(demographic_data$HighestDegree, "MA")) + sum(str_detect(demographic_data$HighestDegree, "MS"))
+countMasters
+
+countBachelors <- sum(str_detect(demographic_data$HighestDegree, "BA/BS"))
+countBachelors 
+
+meanYear <- mean(demographic_data$Graduation, na.rm = TRUE)
+meanYear 
+  
+phdOnly <- demographic_data %>% filter(HighestDegree == "PhD")
+phdMeanYear <- mean(phdOnly$Graduation, na.rm = TRUE)
+phdMeanYear
+```
+
+
+#Bar Chart: Discipline
+```{r}
+
+colorPal <- c("Chemical or Material Sciences"= "#164850", "Engineering or Computer Science"=  "#5794ea", "Health or Medical Sciences"=  "#14cc9b", "Humanities"= "#f5f749", "Life or Earth Sciences"=  "#f7d69b","Physics or Math"=  "#f9b4ed","Social Science"=  "#ee7a44","No Discipline"=  "#4a0809")
+
+discipline_barChart <- ggplot(demographic_data, aes(fill=Discipline, x=User)) + 
+  geom_bar(position="dodge") + 
+  scale_fill_manual( values = colorPal) +
+  scale_y_continuous(breaks=c(3,6,9)) +
+  theme(axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        axis.line = element_line(color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  ylab("Number of Respondents") +
+  xlab("Status as OSF User")
+
+
+discipline_barChart
+ggsave("figures/discipline_barChart.png")
+```
+
+
+#Bar Chart: Degree Year
+Chart made based on data from Qualtrics demographics questionnaire.
+```{r}
+gradYear_barChart <- ggplot(demographic_data, aes(x=Graduation)) + 
+  geom_bar(binwidth = 1, fill = "#5794ea") + 
+  theme(axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8),
+        axis.line = element_line(color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  scale_x_continuous(name="Year", limits=c(2000, 2022), breaks = c(2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2018, 2020, 2022)) +
+  ylab("Number of Respondents") 
+  
+gradYear_barChart
+
+ggsave("figures/gradYear_barChart.png", height = 2, width = 4.75, units = "in")
+```
+
+#Enter Researchers' Geographical Data
+This wasn't captured via Qualtrics so that it wouldn't be associated with other demographic data. But, I do know the country my user/nonuser participants were working in. I manually enter it here into a new dataframe for charting
+
+```{r}
+geoLoc <- data.frame (Country = factor(c("USA", "USA", "India", "India", "USA", "Denmark", "Pakistan", "Sweden", "USA", "Switzerland", "Germany", "Germany", "USA", "UK", "USA", "Denmark", "USA", "Czech Republic", "Germany", "Brazil", "Canada", "Sweden", "Brazil", "USA"), levels = c("Brazil", "Canada", "Czech Republic", "Denmark", "Germany", "India", "Pakistan", "Sweden", "Switzerland", "UK", "USA")) ) %>%
+  mutate(Country = fct_infreq(Country))
+
+geoLoc_barChart <- ggplot(geoLoc, aes(x=Country)) + 
+  geom_bar(fill = "#5794ea") + 
+  theme(axis.title.x = element_text(size = 8),
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        axis.title.y = element_text(size = 8),
+        axis.line = element_line(color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  ylab("Number of User/Nonuser Participants") +
+  xlab("Country")
+geoLoc_barChart
+
+ggsave("figures/geoLoc_barChart.png", height = 3, width = 4.75, units = "in")
+```
+
+
